@@ -1,0 +1,9 @@
+[General]
+Name=Snotify
+Project=1
+[Classes]
+Count=4
+Class0="TMainForm","TForm","frmMain","18","J:\Proyectos\Snotify\frmMain.pas"
+Class1="TListSessions","TList","frmMain","160","J:\Proyectos\Snotify\frmMain.pas"
+Class2="TSpotify","","Spotify","7","J:\Proyectos\Snotify\Spotify.pas"
+Class3="TTimeTeller","","timeteller","17","J:\Proyectos\Snotify\timeteller.pas"
