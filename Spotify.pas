@@ -5,13 +5,26 @@
 
   TODO: This unit will find spotify window handle, volume status, menues statuses, getcoverart
   music status, send commands like next, prev, pause
+
+  ChangeLog:
+
+  2020-05-05:
+  - Fixed method to detect Spotify window, since it might be confused by others like Edge's Chromium instances
+  2018-08-04:
+  - Fixed _handle of Spotify window, using FindWindowProcessId
+    this will locate the window of the parent spotify.exe processId
+    affecting GetSongInfo which uses Windows' Title
+    TODO: test if finding spotify.exe always return main window as parent,
+    since it was stopped on first coincidence, maybe it needs list of all
+    children processes.
+
 }
 
 unit Spotify;
 
 interface
 
-uses Registry, Windows, Sysutils, Classes, ShellApi, System.IOUtils, MsXML, ShlObj, Activex, ComObj;
+uses Registry, Windows, Sysutils, Classes, ShellApi, System.IOUtils, MsXML, ShlObj, Activex, ComObj, TlHelp32, DWMApi;
 
 type
   TSpotify = class(TComponent)
@@ -21,6 +34,7 @@ type
     _isRunning: boolean;
     _song, _artist, _album: String;
     _handle: HWND;
+    _processID: Cardinal;
     _isplaying:Boolean;
     _adsplaying:Boolean;
   public
@@ -42,7 +56,78 @@ type
     property IsPlayingAds: boolean read _adsplaying;
   end;
 
+  wndData = record
+    processID: ULONG;
+    handle: HWND;
+  end;
+
 implementation
+
+function isMainWindow(handle: THandle): Boolean;
+var
+  fhandle: HWND;
+begin
+  fhandle := GetWindow(handle, GW_OWNER);
+  if (fhandle = 0) then //and (IsWindowVisible(handle)) then
+    Result := True
+  else
+    Result := False;
+end;
+
+function enumWindowCallback(handle: THandle; aParam: LPARAM): BOOL; stdcall;
+var
+  procId: Cardinal;
+  data: ^wndData;
+begin
+  GetWindowThreadProcessId(handle, procId);
+  data := pointer(aParam);
+  if (data.processID <> procId) or (not isMainWindow(handle)) then
+  begin
+    Result := True;
+  end
+  else
+  begin
+    data.handle := handle;
+    Result := False;
+  end;
+end;
+
+function FindWindowFromProcessID(const AProcessID: Cardinal): HWND;
+var
+ data: wndData;
+begin
+  data.processID := AProcessID;
+  data.handle := 0;
+  EnumWindows(@enumWindowCallback, LParam(@data));
+  Result := data.handle;
+end;
+
+function ProcessExists(exename: String; var AProcessId: Cardinal): Boolean;
+var
+  ContinueLoop: BOOL;
+  FSnapshotHandle: THandle;
+  FProcessEntry32: TProcessEntry32;
+begin
+  FSnapshotHandle := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  FProcessEntry32.dwSize := SizeOf(FProcessEntry32);
+  ContinueLoop := Process32First(FSnapshotHandle, FProcessEntry32);
+  Result := False;
+  while Integer(ContinueLoop) <> 0 do
+  begin
+    if ((UpperCase(ExtractFileName(FProcessEntry32.szExeFile)) =
+    UpperCase(exename)) or (UpperCase(FProcessEntry32.szExeFile) =
+    UpperCase(exename))) then
+    begin
+      AProcessId := FProcessEntry32.th32ProcessID;
+      Result := True;
+      // let's stop on the first process, hopefully the parent thread
+      Break;
+    end;
+
+    ContinueLoop := Process32Next(FSnapshotHandle, FProcessEntry32);
+  end;
+  CloseHandle(FSnapshotHandle);
+end;
 
 { SpotifyApp }
 
@@ -53,11 +138,120 @@ begin
 end;
 
 function TSpotify.FindSpotifyWnd: Boolean;
+const
+  DWMWA_CLOAKED = 14; // Windows 8 or superior only
+  DWM_NOT_CLOAKED = 0; // i.e. Visible for real
+  DWM_CLOAKED_APP = 1;
+  DWM_CLOAKED_SHELL = 2;
+  DWM_CLOAKED_INHERITED = 4;
+  DWM_NORMAL_APP_NOT_CLOAKED = 8; // invented number, might have issues on newest versions of window 10 2020 or earlier not tested
+type
+  TQueryFullProcessImageName = function(hProcess: THandle; dwFlags: DWORD; lpExeName: PChar; nSize: PDWORD): BOOL; stdcall;
+var
+  LHDesktop: HWND;
+  LHWindow: HWND;
+  LHParent: HWND;
+  LExStyle: DWORD;
+  AppClassName: array[0..255] of Char;
+  Cloaked: Cardinal;
+  titlelen: Integer;
+  title: String;
+  PID: DWORD;
+  hProcess: THandle;
+  fLen: Byte;
+  WinFileName: String;
+  FileName: array[0..MAX_PATH -1] of Char;
+  QueryFullProcessImageName: TQueryFullProcessImageName;
+  nSize: Cardinal;
+
 begin
   _isRunning := False;
+
+  { deprecated since it is not 100% certain
   _handle := FindWindow('SpotifyMainWindow',nil);
   if _handle > 0 then
-  _isRunning := True;
+    _isRunning := True
+  else
+  begin
+  // with new update borderless SpotifyMainWindow is gone but Chrome_WidgetWin_0 is used instead
+    _handle := FindWindow('Chrome_WidgetWin_0', nil);
+    if _handle > 0 then
+    begin
+      // since this class name is given to any app using chromium library based it is
+      // better to find out if the process executable is running instead
+      if ProcessExists('Spotify.exe', _processID) then
+      begin
+        _isRunning := True;
+        _handle := FindWindowFromProcessId(_processID);
+      end;
+    end;
+  end;}
+  LHDesktop := GetDesktopWindow;
+  LHWindow := GetWindow(LHDesktop, GW_CHILD);
+  while LHWindow <> 0 do
+  begin
+    GetClassName(LHWindow, AppClassName, 255);
+    LHParent := GetWindowLong(LHWindow, GWL_HWNDPARENT);
+    LExStyle := GetWindowLong(LHWindow, GWL_EXSTYLE);
+
+    // for UWP apps
+    if AppClassName = 'ApplicationFrameWindow' then
+      DwmGetWindowAttribute(LHWindow, DWMWA_CLOAKED, @Cloaked, SizeOf(Cardinal))
+    else
+      Cloaked := DWM_NORMAL_APP_NOT_CLOAKED;
+
+    // lest ignore if window is visible or not, since it might be hidden in trayicon
+    if (AppClassName <> 'Windows.UI.Core.CoreWindow')
+    // consider cloaked mode too, since it might be running in another virtual desktop
+    and ( (Cloaked = DWM_NOT_CLOAKED) or (Cloaked = DWM_NORMAL_APP_NOT_CLOAKED) or (Cloaked = DWM_CLOAKED_APP) )
+    and ((LHParent = 0) or (LHParent = LHDesktop))
+    and ((LExStyle and WS_EX_TOOLWINDOW = 0) or (LExStyle and WS_EX_APPWINDOW <> 0))
+    then
+    begin
+      titlelen := GetWindowTextLength(LHWindow);
+      if titlelen > 0 then
+      begin
+        SetLength(title, titlelen);
+        GetWindowText(LHWindow, PChar(title), titlelen + 1);
+
+        GetWindowThreadProcessId(LHWindow, PID);
+        hProcess := OpenProcess(PROCESS_ALL_ACCESS, False, PID);
+        if hProcess <> 0 then
+        try
+          SetLength(WinFileName, MAX_PATH);
+          nSize := MAX_PATH;
+          ZeroMemory(@FileName, MAX_PATH);
+          @QueryFullProcessImageName := GetProcAddress(GetModuleHandle(kernel32), 'QueryFullProcessImageNameW');
+          if Assigned(QueryFullProcessImageName) then
+          begin
+            if QueryFullProcessImageName(hProcess, 0, FileName, @nSize) then
+            begin
+              SetString(WinFileName, PChar(@FileName[0]), nSize);
+              if LowerCase(ExtractFileName(WinFileName)) = 'spotify.exe' then
+              begin
+                _isRunning := True;
+                _handle := LHWindow;
+                Result := _isRunning;
+                // there is no need to search again
+                Exit;
+              end;
+            end;
+
+          end;
+
+        finally
+          CloseHandle(hProcess);
+        end;
+
+      end;
+
+    end;
+
+
+    LHWindow := GetWindow(LHWindow, GW_HWNDNEXT);
+  end;
+
+
   Result := _isRunning;
 end;
 
