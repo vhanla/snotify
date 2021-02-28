@@ -6,6 +6,10 @@ http://stackoverflow.com/questions/12287418/how-do-i-free-the-contents-of-a-tlis
 
   Changelog:
 
+  2018-08-04
+    - Fixed Spotify's Window detection
+    - Added hint update on systray icon hover
+
   2017-07-03
     - Detection of Spotify for Windows 10 based on Win10Privacy source code for listing installed apps.
 }
@@ -21,7 +25,8 @@ uses
   Vcl.ComCtrls, {AudioSessionService,} CommCtrl, ShellApi, SkinEngine, Winapi.Messages,
   Vcl.OleServer, SpeechLib_TLB, timeteller,
   JvComponentBase, JvId3v1, VirtualTrees, Vcl.Menus, System.StrUtils, SynCommons, frmAbout,
-  System.ImageList, Vcl.ImgList, Vcl.OleCtrls, IdHashMessageDigest;
+  System.ImageList, Vcl.ImgList, Vcl.OleCtrls, IdHashMessageDigest,
+  System.Win.TaskbarCore, Vcl.Taskbar;
 
 type
   TQueryType = (qtPaused, qtEnabled, qtChecked);
@@ -43,11 +48,11 @@ type
     TrayIcon1: TTrayIcon;
     lstAudioSessions: TListBox;
     btnListAudioSessions: TButton;
-    Button4: TButton;
-    Button5: TButton;
-    Button6: TButton;
-    Button7: TButton;
-    Button8: TButton;
+    btnPrev: TButton;
+    btnPause: TButton;
+    btnPlay: TButton;
+    btnNext: TButton;
+    btnVolume: TButton;
     TrackBar1: TTrackBar;
     tmrVolume: TTimer;
     RadioGroup1: TRadioGroup;
@@ -116,6 +121,8 @@ type
     SslHttpCliAPI: TSslHttpCli;
     pbStatusAPI: TProgressBar;
     tmrAPIStatus: TTimer;
+    Taskbar1: TTaskbar;
+    ilButtons: TImageList;
     procedure btnToastClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -129,12 +136,12 @@ type
     procedure SslHttpCli1DocBegin(Sender: TObject);
     procedure SslHttpCli1DocEnd(Sender: TObject);
     procedure tmrStatusTimer(Sender: TObject);
-    procedure Button4Click(Sender: TObject);
-    procedure Button6Click(Sender: TObject);
-    procedure Button7Click(Sender: TObject);
-    procedure Button5Click(Sender: TObject);
+    procedure btnPrevClick(Sender: TObject);
+    procedure btnPlayClick(Sender: TObject);
+    procedure btnNextClick(Sender: TObject);
+    procedure btnPauseClick(Sender: TObject);
     procedure btnListAudioSessionsClick(Sender: TObject);
-    procedure Button8Click(Sender: TObject);
+    procedure btnVolumeClick(Sender: TObject);
     procedure TrackBar1Change(Sender: TObject);
     procedure tmrVolumeTimer(Sender: TObject);
     procedure Button9Click(Sender: TObject);
@@ -182,6 +189,8 @@ type
     procedure SslHttpCliAPIRequestDone(Sender: TObject; RqType: THttpRequest;
       ErrCode: Word);
     procedure tmrAPIStatusTimer(Sender: TObject);
+    procedure TrayIcon1MouseMove(Sender: TObject; Shift: TShiftState; X,
+      Y: Integer);
   private
     { Private declarations }
     SpotyClient : TSpotify;
@@ -768,17 +777,35 @@ begin
 end;
 
 procedure TMainForm.btnSpotyAuthClick(Sender: TObject);
+var
+  Data: AnsiString;
 begin
 // sugerencias interesantes si falla
 // https://github.com/ShyykoSerhiy/spotilocal/blob/master/src/index.ts
 // https://github.com/ShyykoSerhiy/vscode-spotify/blob/master/package.json
 // http://cgbystrom.com/articles/deconstructing-spotifys-builtin-http-server/
 // pero sólo bastó cambiar de puerto 4380 a 4381, quizás sea conveniente mejorarlo
-  SslHttpCliAPI.URL := 'http://localhost:4381/simplecsrf/token.json';
+  if OAuth = '' then
+  begin
+    //SslHttpCliAPI.URL := 'https://open.spotify.com/token'
+    Data := 'grant_type=client_credentials';
+    SslHttpCliAPI.URL := 'https://accounts.spotify.com/api/token';
+    SslHttpCliAPI.ExtraHeaders.Add('Authorization: basic PASTE YOUR CLIENT CREDENTIALS HERE');
+    SslHttpCliAPI.ContentTypePost := 'application/x-www-form-urlencoded';
+    SslHttpCliAPI.SendStream := TMemoryStream.Create;
+    SslHttpCliAPI.SendStream.Write(Data[1], Length(Data));
+    SslHttpCliAPI.SendStream.Seek(0,0);
+    SslHttpCliAPI.RcvdStream := TMemoryStream.Create;
+  end
+  else
+    SslHttpCliAPI.URL := 'http://localhost:4381/simplecsrf/token.json';
 
   Memo1.Lines.Add('Connecting to: ' + SslHttpCliAPI.URL);
   try
-    SslHttpCliAPI.GetASync;
+    if OAuth = '' then
+      SslHttpCliAPI.PostASync
+    else
+      SslHttpCliAPI.GetASync;
   except
     on E:Exception do begin
       Memo1.Lines.Add('Connection error! ' + E.ClassName + ' : ' + E.Message);
@@ -787,7 +814,7 @@ begin
   end;
 end;
 
-procedure TMainForm.Button4Click(Sender: TObject);
+procedure TMainForm.btnPrevClick(Sender: TObject);
 begin
 {  keybd_event(VK_MEDIA_PREV_TRACK,MapVirtualKey(VK_MEDIA_PREV_TRACK,0),0,0);
   Sleep(10);
@@ -796,7 +823,7 @@ begin
   pmPreviousClick(Sender);
 end;
 
-procedure TMainForm.Button5Click(Sender: TObject);
+procedure TMainForm.btnPauseClick(Sender: TObject);
 begin
 {  keybd_event(VK_MEDIA_STOP,MapVirtualKey(VK_MEDIA_STOP,0),0,0);
   Sleep(10);
@@ -806,7 +833,7 @@ begin
   pmPauseClick(Sender);
 end;
 
-procedure TMainForm.Button6Click(Sender: TObject);
+procedure TMainForm.btnPlayClick(Sender: TObject);
 begin
 {  keybd_event(VK_MEDIA_PLAY_PAUSE,MapVirtualKey(VK_MEDIA_PLAY_PAUSE,0),0,0);
   Sleep(10);
@@ -815,7 +842,7 @@ begin
   pmPauseClick(Sender);
 end;
 
-procedure TMainForm.Button7Click(Sender: TObject);
+procedure TMainForm.btnNextClick(Sender: TObject);
 begin
 {  keybd_event(VK_MEDIA_NEXT_TRACK,MapVirtualKey(VK_MEDIA_NEXT_TRACK,0),0,0);
   Sleep(10);
@@ -824,20 +851,20 @@ begin
   pmNextClick(Sender);
 end;
 
-procedure TMainForm.Button8Click(Sender: TObject);
+procedure TMainForm.btnVolumeClick(Sender: TObject);
 begin
   if spotifySessionId < 0 then Exit;
 
   //if Button8.Caption = '🔇🔊🔉🔈' then
-  if Button8.Caption = '🔈' then
+  if btnVolume.Caption = '🔈' then
   begin
-    Button8.Caption := '🔊';
+    btnVolume.Caption := '🔊';
     //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
     SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
   end
   else
   begin
-    Button8.Caption := '🔈';
+    btnVolume.Caption := '🔈';
     //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
     SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
   end;
@@ -955,7 +982,6 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
-
   spotifySessionId := -1;
   SpotyClient := TSpotify.Create;
 
@@ -1070,12 +1096,14 @@ end;
 
 procedure TMainForm.pmNextClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 115,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 115,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000073, 0);
 end;
 
 procedure TMainForm.pmPauseClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 114,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 114,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000072, 0);
 end;
 
 procedure TMainForm.pmMinClick(Sender: TObject);
@@ -1094,7 +1122,8 @@ end;
 
 procedure TMainForm.pmPreviousClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 116,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 116,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000074, 0);
 end;
 
 procedure TMainForm.RadioGroup1Click(Sender: TObject);
@@ -1115,18 +1144,20 @@ end;
 
 procedure TMainForm.pmRepeatClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 120,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 120,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000078, 0);
 end;
 
 procedure TMainForm.pmSeekBackwardClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 118,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 118,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000076, 0);
 end;
 
 procedure TMainForm.pmSeekForwardClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 117
-  ,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 117,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000075, 0);
 end;
 
 procedure TMainForm.Settings1Click(Sender: TObject);
@@ -1136,7 +1167,8 @@ end;
 
 procedure TMainForm.pmShuffleClick(Sender: TObject);
 begin
-  PostMessage(SpotyClient.Handle, WM_COMMAND, 119,0);
+  //PostMessage(SpotyClient.Handle, WM_COMMAND, 119,0);
+  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000077, 0);
 end;
 
 procedure TMainForm.PopupMenu1Popup(Sender: TObject);
@@ -1310,7 +1342,9 @@ begin
   HttpCli := Sender as TSslHttpCli;
   ContentType := HttpCli.ContentType;
   try
-    if Pos('application/json',ContentType)>0 then
+    if (Pos('application/json',ContentType)>0)
+    or ((HttpCli.StatusCode = 200) and (Pos('tps://open.spotify.com/token', HttpCli.Location)>0))
+    then
       HttpCli.RcvdStream := TFileStream.Create('api.json', fmCreate);
   except
     on E:Exception do begin
@@ -1342,7 +1376,9 @@ var
   Json, Images : Variant;
 begin
   ContentType := SslHttpCliAPI.ContentType;
-  if Pos('application/json',ContentType)>0 then
+  if (Pos('application/json',ContentType)>0)
+  or ((SslHttpCliAPI.StatusCode = 200) and (Pos('https://open.spotify.com/token', SslHttpCliAPI.Location)>0))
+  then
   begin
     DataIn := TBufferedFileStream.Create('api.json', fmOpenRead);
     try
@@ -1365,7 +1401,7 @@ begin
         SslHttpCliAPI.URL := 'http://localhost:4381/remote/status.json?&oauth=' + OAuth + '&csrf=' + CSRF;
         SslHttpCliAPI.GetASync;
       end
-      else if Json.error <> NULL then
+      else if (Json.error <> NULL) and (OAuth = '') then
       begin
         Memo1.Lines.Add(Json);
         // let's ask for an oauth toke from spotify
@@ -1390,13 +1426,13 @@ begin
           begin
             if Json.track.track_type = 'ad' then
             begin
-              if Button8.Caption = '🔊' then
-                Button8Click(Sender);
+              if btnVolume.Caption = '🔊' then
+                btnVolumeClick(Sender);
             end
             else
             begin
-              if Button8.Caption = '🔈' then
-                Button8Click(Sender);
+              if btnVolume.Caption = '🔈' then
+                btnVolumeClick(Sender);
             end;
 
           end;
@@ -1442,17 +1478,18 @@ begin
 
   if spotifySessionId < 0 then Exit;
 
-{  if (Trim(LabeledEdit2.Text) = '') then
+  //Temporary workaround without json webapi - 2019
+  if (Trim(LabeledEdit2.Text) = '') then
   begin
-    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
+    SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
+    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
   end
   else
   begin
-    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
-  end;}
+    SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
+    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
+  end;
 end;
-
-
 
 procedure TMainForm.tmrVolumeTimer(Sender: TObject);
 begin
@@ -1475,6 +1512,17 @@ begin
     Hide
   else
     Show;
+end;
+
+procedure TMainForm.TrayIcon1MouseMove(Sender: TObject; Shift: TShiftState; X,
+  Y: Integer);
+var
+  P: TPoint;
+begin
+  P.X := X;
+  P.Y := Y;
+  TrayIcon1.Hint := LabeledEdit1.Text + ' - ' + LabeledEdit2.Text;
+  Application.ActivateHint(P);
 end;
 
 procedure TMainForm.VirtualStringTree1FreeNode(Sender: TBaseVirtualTree;
