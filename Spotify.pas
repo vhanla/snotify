@@ -8,6 +8,9 @@
 
   ChangeLog:
 
+  2021-02-28:
+  - Moves Spotify messages (play, pause, min, etc.) from main form to this unit
+    for easier play, pause, etc. control using Spotify's custom messages handler
   2020-05-05:
   - Fixed method to detect Spotify window, since it might be confused by others like Edge's Chromium instances
   2018-08-04:
@@ -24,7 +27,18 @@ unit Spotify;
 
 interface
 
-uses Registry, Windows, Sysutils, Classes, ShellApi, System.IOUtils, MsXML, ShlObj, Activex, ComObj, TlHelp32, DWMApi;
+uses Registry, Windows, Sysutils, Classes, ShellApi, System.IOUtils, MsXML,
+ShlObj, Activex, ComObj, TlHelp32, DWMApi, Messages;
+
+const
+  // SpotifyDesktop Messages
+  SPOTIFY_PLAY_PAUSE          = $18000072; // 114 value for older client
+  SPOTIFY_PLAY_NEXT           = $18000073; // 115
+  SPOTIFY_PLAY_PREVIOUS       = $18000074; // 116
+  SPOTIFY_PLAY_SEEK_FORWARD   = $18000075; // 117
+  SPOTIFY_PLAY_SEEK_BACKWARD  = $18000076; // 118
+  SPOTIFY_PLAY_SHUFFLE        = $18000077; // 119
+  SPOTIFY_PLAY_REPEAT         = $18000078; // 120
 
 type
   TSpotify = class(TComponent)
@@ -46,6 +60,16 @@ type
     function GetCurrentAlbum: String;
     function GetSongInfo: Boolean;
     procedure StartSpotify;
+
+    // PostMessage based messages to control Spotify Desktop Client
+    procedure PlayPause(AssertClient: Boolean = False);
+    procedure PlayPrevious(AssertClient: Boolean = False);
+    procedure PlayNext(AssertClient: Boolean = False);
+    procedure PlaySeekBackward(AssertClient: Boolean = False);
+    procedure PlaySeekForward(AssertClient: Boolean = False);
+    procedure PlayShuffle(AssertClient: Boolean = False);
+    procedure PlayRepeatSong(AssertClient: Boolean = False);
+
     constructor Create;
     property Song: string read GetCurrentSong;
     property Artist: String read GetCurrentArtist;
@@ -440,6 +464,50 @@ begin
   end
   else
     _isplaying := False;
+end;
+
+{ Spotify Messages }
+
+procedure TSpotify.PlayNext;
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_NEXT, 0);
+end;
+
+procedure TSpotify.PlayPause(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_PAUSE, 0);
+end;
+
+procedure TSpotify.PlayPrevious(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_PREVIOUS, 0);
+end;
+
+procedure TSpotify.PlayRepeatSong(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_REPEAT, 0);
+end;
+
+procedure TSpotify.PlaySeekBackward(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_REPEAT, 0);
+end;
+
+procedure TSpotify.PlaySeekForward(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_SEEK_FORWARD, 0);
+end;
+
+procedure TSpotify.PlayShuffle(AssertClient: Boolean = False);
+begin
+  if AssertClient then FindSpotifyWnd;
+    PostMessage(Handle, WM_COMMAND, SPOTIFY_PLAY_SEEK_BACKWARD, 0);
 end;
 
 procedure TSpotify.StartSpotify;
