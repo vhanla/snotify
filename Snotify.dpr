@@ -16,7 +16,8 @@ uses
   Vcl.Styles,
   timeteller in 'timeteller.pas',
   frmAbout in 'frmAbout.pas' {frmSplash},
-  InterfaceSpotify in 'InterfaceSpotify.pas';
+  InterfaceSpotify in 'InterfaceSpotify.pas',
+  functions in 'functions.pas';
 
 {$R *.res}
 var
