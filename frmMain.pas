@@ -20,7 +20,7 @@ interface
 uses
   Winapi.Windows, System.SysUtils, Vcl.Forms, Vcl.StdCtrls, System.Classes, Vcl.Controls,
   Vcl.Imaging.pngimage, Vcl.ExtCtrls, Vcl.Buttons, Vcl.Graphics, Spotify, Vcl.Dialogs,
-  OverbyteIcsHttpProt, OverbyteIcsWndControl,
+  OverbyteIcsHttpProt, OverbyteIcsWndControl, iTunes,
   OverbyteIcsMultipartHttpDownloader, OverbyteIcsWSocket, syncrossplatformjson, jpeg,
   Vcl.ComCtrls, {AudioSessionService,} CommCtrl, ShellApi, SkinEngine, Winapi.Messages,
   Vcl.OleServer, SpeechLib_TLB, timeteller,
@@ -38,8 +38,8 @@ type
     btnToast: TButton;
     Memo1: TMemo;
     Image10: TImage;
-    LabeledEdit1: TLabeledEdit;
-    LabeledEdit2: TLabeledEdit;
+    leArtist: TLabeledEdit;
+    leSong: TLabeledEdit;
     btnCover: TButton;
     SslHttpCli1: TSslHttpCli;
     SslContext1: TSslContext;
@@ -123,6 +123,7 @@ type
     tmrAPIStatus: TTimer;
     Taskbar1: TTaskbar;
     ilButtons: TImageList;
+    tmrCoverUpdater: TTimer;
     procedure btnToastClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -191,9 +192,11 @@ type
     procedure tmrAPIStatusTimer(Sender: TObject);
     procedure TrayIcon1MouseMove(Sender: TObject; Shift: TShiftState; X,
       Y: Integer);
+    procedure tmrCoverUpdaterTimer(Sender: TObject);
   private
     { Private declarations }
     SpotyClient : TSpotify;
+    iTunesClient: TiTunes;
     TimeTeller: TTimeTeller;
   public
     { Public declarations }
@@ -281,156 +284,11 @@ implementation
 
 {$R *.dfm}
 
-uses uWinRTNotifier;
+uses uWinRTNotifier, functions;
 
-function HashString(const Text: string): string;
-begin
-  with TIdHashMessageDigest5.Create do
-  try
-    Result := HashStringAsHex(Text); // returns '5EB63BBBE01EEED093CB22BB8F5ACDC3' e.g.
-  finally
-    Free;
-  end;
-end;
 
-function ValidPath(srcPath: string; out destPath: string):Boolean;
-var
-  envpath: string;
-  firstsymbol: integer;
-  secondsymbol: Integer; // post of second % 'cause we need %anyvariable%<-- this one too
-begin
-  if FileExists(srcPath) then
-  begin
-    destPath := srcPath;
-    Result := True;
-    Exit;
-  end;
 
-  if StrLen(PChar(srcPath)) < 3 then
-  Exit;
 
-  Result := False;
-  firstsymbol := Pos('%', srcPath);
-  if firstsymbol = 1 then
-  begin
-    secondsymbol := PosEx('%', srcPath, firstsymbol + 1);
-    if secondsymbol > 1 then
-    begin
-      envpath := Copy(srcPath, firstsymbol + 1, secondsymbol - firstsymbol - 1);
-    end;
-    //envPath := IncludeTrailingPathDelimiter(GetEnvironmentVariable(envpath));
-    envPath := GetEnvironmentVariable(envpath);
-    if not DirectoryExists(envPath) then
-      Exit;
-    // now we complet the full file path, let's reuse the envpath variable :3
-    envpath := envpath + Copy(srcPath, StrLen(PChar(envpath))-1, StrLen(PChar(srcPath)) - StrLen(PChar(envpath)) +2);
-    if FileExists(envpath) then
-    begin
-      destPath := envpath;
-      Result := True;
-    end;
-  end;
-
-end;
-
-function GetImageListSH(SHIL_FLAG: Cardinal): HIMAGELIST;
-const
-  IID_IImageList: TGUID = '{46EB5926-582E-4017-9FDF-E8998DAA0950}';
-type
-  _SHGetImageList = function (iImageList: Integer; const riid: TGUID; var ppv: Pointer): hResult; stdcall;
-var
-  Handle : THandle;
-  SHGetImageList: _SHGetImageList;
-begin
-  Result := 0;
-  Handle := LoadLibrary('Shell32.dll');
-  if Handle <> S_OK then
-  try
-    SHGetImageList := GetProcAddress(Handle, PChar(727));
-    if Assigned(SHGetImageList) and (Win32Platform = VER_PLATFORM_WIN32_NT) then
-      SHGetImageList(SHIL_FLAG, IID_IImageList, Pointer(Result));
-  finally
-    FreeLibrary(Handle);
-  end;
-
-end;
-
-function GetIconFromFile(aFile: string; var aIcon: TIcon; SHIL_FLAG: Cardinal): Boolean;
-var
-  aImgList: HIMAGELIST;
-  SFI : TSHFileInfo;
-  aIndex : Integer;
-  res: HRESULT;
-begin
-  // Get the index of the imagelist
-  SHGetFileInfo(PChar(aFile), FILE_ATTRIBUTE_NORMAL, SFI,
-      SizeOf(TSHFileInfo), SHGFI_ICON or SHGFI_LARGEICON or SHGFI_SHELLICONSIZE or
-      SHGFI_SYSICONINDEX or SHGFI_TYPENAME or SHGFI_DISPLAYNAME);
-  if not Assigned(aIcon) then
-  aIcon := TIcon.Create;
-  // get the imagelist
-  aImgList := GetImageListSH(SHIL_FLAG);
-  // get index
-  aIndex := SFI.iIcon;
-  // extract the icon handle
-  res := ImageList_GetIcon( aImgList, aIndex, ILD_NORMAL);
-  aIcon.Handle := res;
-  if res <> S_OK then
-    Result := True
-  else
-    Result := False; // if result is = it means there was no icon found
-end;
-
-//https://marc.durdin.net/2015/08/an-update-for-encodeuricomponent/
-function EncodeURIComponent(const ASrc: string): string;
-const
-  HexMap: string = '0123456789ABCDEF';
-
-  function IsSafeChar(ch: Byte): Boolean;
-  begin
-    if (ch >= 48) and (ch <= 57) then Result := True    // 0-9
-    else if (ch >= 65) and (ch <= 90) then Result := True  // A-Z
-    else if (ch >= 97) and (ch <= 122) then Result := True  // a-z
-    else if (ch = 33) then Result := True // !
-    else if (ch >= 39) and (ch <= 42) then Result := True // '()*
-    else if (ch >= 45) and (ch <= 46) then Result := True // -.
-    else if (ch = 95) then Result := True // _
-    else if (ch = 126) then Result := True // ~
-    else Result := False;
-  end;
-
-var
-  I, J: Integer;
-  Bytes: TBytes;
-begin
-  Result := '';
-
-  Bytes := TEncoding.UTF8.GetBytes(ASrc);
-
-  I := 0;
-  J := Low(Result);
-
-  SetLength(Result, Length(Bytes) * 3); // space to %xx encode every byte
-
-  while I < Length(Bytes) do
-  begin
-    if IsSafeChar(Bytes[I]) then
-    begin
-      Result[J] := Char(Bytes[I]);
-      Inc(J);
-    end
-    else
-    begin
-      Result[J] := '%';
-      Result[J+1] := HexMap[(Bytes[I] shr 4) + Low(ASrc)];
-      Result[J+2] := HexMap[(Bytes[I] and 15) + Low(ASrc)];
-      Inc(J,3);
-    end;
-    Inc(I);
-  end;
-
-  SetLength(Result, J-Low(ASrc));
-end;
 
 procedure TMainForm.Button10Click(Sender: TObject);
 begin
@@ -555,7 +413,12 @@ var
 //  PostData : AnsiString;
   ApiURL: string;
 begin
-  ApiURL := 'https://api.spotify.com/v1/search?query=track%3A'+EncodeURIComponent(LabeledEdit2.Text)+'+artist%3A'+EncodeURIComponent(LabeledEdit1.Text)+'&offset=0&type=track';
+  // Let's use iTunes intead
+  iTunesClient.QueryArtistBySong(leArtist.Text, leSong.Text);
+  tmrCoverUpdater.Enabled := True;
+  Exit;
+
+  ApiURL := 'https://api.spotify.com/v1/search?query=track%3A'+EncodeURIComponent(leSong.Text)+'+artist%3A'+EncodeURIComponent(leArtist.Text)+'&offset=0&type=track';
   // if file already exists in our cache directory
   if FileExists(ExtractFilePath(ParamStr(0))+'cache\'+HashString(ApiURL)) then
   begin
@@ -609,18 +472,20 @@ procedure TMainForm.btnToastClick(Sender: TObject);
 var
   Bmp: TBitmap;
   Icon: TIcon;
-  Image: TWICImage;
+//  Image: TWICImage;
   ImageList: TImageList;
 begin
-  Image := TWICImage.Create;
+//  Image := TWICImage.Create;
   try
-    Image.LoadFromFile('cover.jpg');
+    //Image.LoadFromFile('cover.jpg');
     Bmp := TBitmap.Create;
     try
       Icon := TIcon.Create;
       try
       //http://www.swissdelphicenter.ch/en/showcode.php?id=913
-        Bmp.Assign(Image);
+        //Bmp.Assign(Image);
+        Bmp.SetSize(Image1.Picture.Width, Image1.Picture.Height);
+        Bmp.Canvas.Draw(0, 0, Image1.Picture.Graphic);
         ImageList := TImageList.CreateSize(Bmp.Width, Bmp.Height);
         try
           ImageList.AddMasked(Bmp, Bmp.TransparentColor);
@@ -636,7 +501,7 @@ begin
           if canToast then
           begin
             canToast := False;
-            ShowNotification( 1, LabeledEdit1.Text, LabeledEdit2.Text, '', '',
+            ShowNotification( 1, leArtist.Text, leSong.Text, '', '',
                TImage(Image10), mmoToast.Lines);
           end;
         finally
@@ -649,7 +514,7 @@ begin
       Bmp.Free;
     end;
   finally
-    Image.Free;
+//    Image.Free;
   end;
 
 end;
@@ -888,7 +753,7 @@ procedure TMainForm.cbSystrayCoverClick(Sender: TObject);
 var
   Icon: TIcon;
   Bmp : TBitmap;
-  Image: TWICImage;
+//  Image: TWICImage;
   ImageList: TImageList;
 begin
   if not cbSystrayCover.Checked then
@@ -906,15 +771,17 @@ begin
   end
   else
   begin
-    Image := TWICImage.Create;
+    //Image := TWICImage.Create;
     try
-      Image.LoadFromFile('cover.jpg');
+//      Image.LoadFromFile('cover.jpg');
       Bmp := TBitmap.Create;
       try
+        Bmp.SetSize(Image1.Picture.Width, Image1.Picture.Height);
+        Bmp.Canvas.Draw(0, 0, Image1.Picture.Graphic);
         Icon := TIcon.Create;
         try
           //http://www.swissdelphicenter.ch/en/showcode.php?id=913
-          Bmp.Assign(Image);
+//          Bmp.Assign(Image);
           ImageList := TImageList.CreateSize(Bmp.Width, Bmp.Height);
           try
             ImageList.AddMasked(Bmp, Bmp.TransparentColor);
@@ -934,7 +801,7 @@ begin
         Bmp.Free;
       end;
     finally
-      Image.Free;
+//      Image.Free;
     end;
   end;
 end;
@@ -984,6 +851,8 @@ procedure TMainForm.FormCreate(Sender: TObject);
 begin
   spotifySessionId := -1;
   SpotyClient := TSpotify.Create;
+
+  iTunesClient := TiTunes.Create;
 
   SslHttpCli1.Agent := 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.116 Safari/537.36 OPR/40.0.2308.81';
   SslHttpCli1.SocksServer := '';
@@ -1042,6 +911,7 @@ begin
   TimeTeller.Free;
   sessions.Free;
   SpotyClient.Free;
+  iTunesClient.Free;
   //FreeAndNil(AudioSession);
 end;
 
@@ -1096,14 +966,12 @@ end;
 
 procedure TMainForm.pmNextClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 115,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000073, 0);
+  SpotyClient.PlayNext();
 end;
 
 procedure TMainForm.pmPauseClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 114,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000072, 0);
+  SpotyClient.PlayPause();
 end;
 
 procedure TMainForm.pmMinClick(Sender: TObject);
@@ -1122,8 +990,7 @@ end;
 
 procedure TMainForm.pmPreviousClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 116,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000074, 0);
+  SpotyClient.PlayPrevious();
 end;
 
 procedure TMainForm.RadioGroup1Click(Sender: TObject);
@@ -1144,20 +1011,17 @@ end;
 
 procedure TMainForm.pmRepeatClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 120,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000078, 0);
+  SpotyClient.PlayRepeatSong();
 end;
 
 procedure TMainForm.pmSeekBackwardClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 118,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000076, 0);
+  SpotyClient.PlaySeekBackward();
 end;
 
 procedure TMainForm.pmSeekForwardClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 117,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000075, 0);
+  SpotyClient.PlaySeekForward();
 end;
 
 procedure TMainForm.Settings1Click(Sender: TObject);
@@ -1167,8 +1031,7 @@ end;
 
 procedure TMainForm.pmShuffleClick(Sender: TObject);
 begin
-  //PostMessage(SpotyClient.Handle, WM_COMMAND, 119,0);
-  PostMessage(SpotyClient.Handle, WM_COMMAND, $18000077, 0);
+  SpotyClient.PlayShuffle();
 end;
 
 procedure TMainForm.PopupMenu1Popup(Sender: TObject);
@@ -1458,6 +1321,16 @@ begin
   btnSpotyAuthClick(Sender);
 end;
 
+procedure TMainForm.tmrCoverUpdaterTimer(Sender: TObject);
+begin
+  if iTunesClient.Updated then
+  begin
+    tmrCoverUpdater.Enabled := False;
+    Image1.Picture.Assign(iTunesClient.FPicture);
+  end;
+
+end;
+
 procedure TMainForm.tmrStatusTimer(Sender: TObject);
 begin
   if not IsWindow(SpotyClient.Handle) then
@@ -1465,8 +1338,8 @@ begin
   else
     pnlFlash.Visible := False;
 
-  LabeledEdit1.Text := SpotyClient.Artist;
-  LabeledEdit2.Text := SpotyClient.Song;
+  leArtist.Text := SpotyClient.Artist;
+  leSong.Text := SpotyClient.Song;
   //LabeledEdit3.Text := SpotyClient.Album;
 
   if SpotyClient.IsPlayingAds then
@@ -1479,7 +1352,7 @@ begin
   if spotifySessionId < 0 then Exit;
 
   //Temporary workaround without json webapi - 2019
-  if (Trim(LabeledEdit2.Text) = '') then
+  if (Trim(leSong.Text) = '') then
   begin
     SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
     //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
@@ -1521,7 +1394,7 @@ var
 begin
   P.X := X;
   P.Y := Y;
-  TrayIcon1.Hint := LabeledEdit1.Text + ' - ' + LabeledEdit2.Text;
+  TrayIcon1.Hint := leArtist.Text + ' - ' + leSong.Text;
   Application.ActivateHint(P);
 end;
 

@@ -26,6 +26,7 @@ object MainForm: TMainForm
     Top = 21
     Width = 64
     Height = 64
+    Stretch = True
   end
   object lblpeak: TLabel
     Left = 292
@@ -1057,7 +1058,7 @@ object MainForm: TMainForm
       OnClick = btnSpotyAuthClick
     end
   end
-  object LabeledEdit1: TLabeledEdit
+  object leArtist: TLabeledEdit
     Left = 78
     Top = 21
     Width = 194
@@ -1068,7 +1069,7 @@ object MainForm: TMainForm
     ReadOnly = True
     TabOrder = 0
   end
-  object LabeledEdit2: TLabeledEdit
+  object leSong: TLabeledEdit
     Left = 78
     Top = 64
     Width = 194
@@ -1521,10 +1522,10 @@ object MainForm: TMainForm
     TabOrder = 18
   end
   object grpHotkeys: TGroupBox
-    Left = 344
-    Top = 214
-    Width = 354
-    Height = 259
+    Left = 368
+    Top = 280
+    Width = 361
+    Height = 174
     Caption = 'grpHotkeys'
     TabOrder = 19
     object hkPause: THotKey
@@ -2339,5 +2340,11 @@ object MainForm: TMainForm
       E607E3C7F01FE027E707E3C7F03FE0E7E7C7E3C7F0FFE3E7E7F7E3C7F3FFEFE7
       FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000
       000000000000}
+  end
+  object tmrCoverUpdater: TTimer
+    Enabled = False
+    OnTimer = tmrCoverUpdaterTimer
+    Left = 336
+    Top = 240
   end
 end
