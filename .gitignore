@@ -66,6 +66,7 @@ __recovery/
 *.stat
 
 Win32
+Win64
 Notes.txt
 
 untracked
