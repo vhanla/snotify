@@ -1,2 +1,2 @@
-copy SpotifyStyle.vsf C:\Users\Public\Documents\Embarcadero\Studio\19.0\Styles\
+copy SpotifyStyle.vsf C:\Users\Public\Documents\Embarcadero\Studio\20.0\Styles\
 pause
