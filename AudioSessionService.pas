@@ -1,5 +1,5 @@
 {
-This a stripped down and incomplete version which won't support modern ui apps
+Author: vhanla License MIT
 }
 unit AudioSessionService;
 
@@ -115,10 +115,14 @@ type
   function Initialize: HResult; stdcall;
   function InitializeForCurrentApplication: HRESULT; stdcall; // = 0
   //virtual __declspec(nothrow) HRESULT __stdcall InitializeForPackage(LPWSTR) = 0;
-  function InitializeForPackage(package: PWideChar): HRESULT; stdcall; // = 0;
+  function InitializeForPackage(PackageName: LPWSTR): HRESULT; stdcall; // = 0;
   function InitializeForFile: HResult; stdcall;
   //virtual __declspec(nothrow) HRESULT __stdcall GetMainResourceMap(GUID const &, void **) = 0;
-  function GetMainResourceMap(const mapa: TGUID; any: Pointer): HResult; stdcall;
+  function GetMainResourceMap(mapa: PGUID; any: Pointer): HResult; stdcall;
+  function GetResourceMap(riid: PGUID; ppvObject: Pointer): HRESULT; stdcall;
+  function GetDefaultContext(riid: PGUID; ppvObject: Pointer): HRESULT; stdcall;
+  function GetReference(riid: PGUID; ppvObject: Pointer): HRESULT; stdcall;
+  function IsResourceReference(var IsReference: BOOL): HRESULT; stdcall;
   end;
 
   IResourceMap = interface(IUnknown)
@@ -128,12 +132,12 @@ type
   function GetString: HRESULT; stdcall;
   function GetStringForContext: HRESULT; stdcall;
   //virtual __declspec(nothrow) HRESULT __stdcall GetFilePath(LPWSTR, LPWSTR*) = 0;
-  function GetFilePath(a: PWideChar; var b: PWideChar): HRESULT; stdcall;
+  function GetFilePath(const Key: PWideChar; var Value: PWideChar): HRESULT; stdcall;
   end;
 
 
-  PEarTrumpetAudioSession = ^TEarTrumpetAudioSession;
-  TEarTrumpetAudioSession = record
+  PAudioSession = ^TAudioSession;
+  TAudioSession = record
     DisplayName: PWideChar;
     IconPath: PWideChar;
     GroupingId: TGUID;
@@ -143,16 +147,18 @@ type
     Volume: Single;
     IsDesktopApp: Boolean;
     IsMuted: Boolean;
+    PeekValue: Single;
   end;
 
   PListSessions = ^TListSessions;
   TListSessions = class(TList)
   private
-    function Get(Index: Integer): PEarTrumpetAudioSession;
+    function GetItem(Index: Integer): PAudioSession;
   public
-    destructor Destroy; override;
-    function Add(Value: PEarTrumpetAudioSession): Integer;
-    property Items[Index: Integer]: PEarTrumpetAudioSession read Get; default;
+    //destructor Destroy; override;
+    //function Add(Value: PAudioSession): Integer;
+    procedure Notify(Ptr: Pointer; Action: TListNotification); override;
+    property Items[Index: Integer]: PAudioSession read GetItem; default;
   end;
 
   {PMapSession = ^TMapSession;
@@ -165,13 +171,13 @@ type
   PMapSessions = ^TMapSessions;
   TMapSessions = class(TInterfaceList)
   private
-    sessionId: ARRAY of Integer;
+    sessionId: ARRAY of LongWord;
     function Get(Index: Integer): IAudioSessionControl2;
     function GetSession(Index: Integer): Integer;
   public
     destructor Destroy; override;
     function Add(Value: IAudioSessionControl2): Integer; overload;
-    function Add(sesionId: Integer; Value: IAudioSessionControl2): Integer; overload;
+    function Add(sesionId: LongWord; Value: IAudioSessionControl2): Integer; overload;
     property Items[Index: Integer]: IAudioSessionControl2 read Get; default;
     property Sessions[Index: Integer]: Integer read GetSession;
   end;
@@ -185,8 +191,9 @@ type
     //_sessionMap: IAudioSessionControl2; //std::map<int, CComPtr<IAudioSessionControl2>> _sessionMap;
     procedure CleanUpAudioSessions;
     function CreateEtAudioSessionFromAudioSession(sessionEnumerator: IAudioSessionEnumerator;
-        sessionCount: Integer; var etAudioSession: PEarTrumpetAudioSession): HRESULT;
-    function GetAppProperties(pszAppId: WideChar; var ppszName: WideChar; var ppszIcon: WideChar; var background: ULONG): HRESULT;
+        sessionCount: Integer; var etAudioSession: PAudioSession): HRESULT;
+//    function GetAppProperties(pszAppId: String; var ppszName: WideChar; var ppszIcon: WideChar; var background: ULONG): HRESULT;
+    function GetAppProperties(pszAppId: String; var ppszName: PChar; var ppszIcon: PChar; var background: ULONG): HRESULT;
     function GetAppUserModelIdFromPid(pid: Cardinal; var applicationUserModelId: PWideChar): HRESULT;
     function EsImmersiveProcess(pid: Cardinal): HRESULT;
     function CanResolveAppByApplicationUserModelId(applicationUserModelId: PWideChar): Boolean;
@@ -288,28 +295,52 @@ function IsImmersiveProcess(hProcess: THandle): BOOL; stdcall;
   external 'USER32.dll' name 'IsImmersiveProcess';
 { TListDevices }
 
-function TListSessions.Add(Value: PEarTrumpetAudioSession): Integer;
+{function TListSessions.Add(Value: PAudioSession): Integer;
 begin
   Result := inherited Add(Value);
-end;
+end;}
 
-destructor TListSessions.Destroy;
+{destructor TListSessions.Destroy;
 var
   I : Integer;
-  con: Integer;
 begin
-  con := Count - 1;
-  for I := 0 to con do
+  for I := 0 to Count - 1 do
   begin
+    //StrDispose(Items[I].DisplayName);
+    //StrDispose(Items[I].IconPath);
+    CoTaskMemFree(Items[I].DisplayName);
+    CoTaskMemFree(Items[I].IconPath);
+    //Items[I].DisplayName := '';
+    //Items[I].IconPath := '';
     FreeMem(Items[I]);
   end;
 
   inherited;
+end;}
+
+function TListSessions.GetItem(Index: Integer): PAudioSession;
+begin
+  Result := PAudioSession(inherited Get(Index));
 end;
 
-function TListSessions.Get(Index: Integer): PEarTrumpetAudioSession;
+procedure TListSessions.Notify(Ptr: Pointer; Action: TListNotification);
+var
+  FAudioSession: PAudioSession;
 begin
-  Result := PEarTrumpetAudioSession(inherited Get(Index));
+  inherited;
+
+  if Action = lnAdded then
+  begin
+    GetMem(FAudioSession, SizeOf(TAudioSession));
+    CopyMemory(FAudioSession, Ptr, SizeOf(TAudioSession));
+    List[IndexOf(Ptr)] := FAudioSession;
+  end
+  else if Action = lnDeleted then
+  begin
+    FreeMem(Ptr, SizeOf(TAudioSession));
+  end;
+
+
 end;
 
 { TAudioSessionService }
@@ -325,14 +356,14 @@ begin
 end;
 
 procedure TAudioSessionService.CleanUpAudioSessions;
-var
-  I: Integer;
+//var
+//  I: Integer;
 begin
-  for I := 0 to _sessions.Count - 1 do
-  begin
-    CoTaskMemFree(_sessions[I].DisplayName);
-    CoTaskMemFree(_sessions[I].IconPath);
-  end;
+//  for I := 0 to _sessions.Count - 1 do
+//  begin
+//    CoTaskMemFree(_sessions[I].DisplayName);
+//    CoTaskMemFree(_sessions[I].IconPath);
+//  end;
   _sessions.Clear;
 
 //  for I := 0 to _sessionMap.Count - 1 do
@@ -350,7 +381,7 @@ end;
 
 function TAudioSessionService.CreateEtAudioSessionFromAudioSession(
   sessionEnumerator: IAudioSessionEnumerator; sessionCount: Integer;
-  var etAudioSession: PEarTrumpetAudioSession): HRESULT;
+  var etAudioSession: PAudioSession): HRESULT;
 
   //http://stackoverflow.com/questions/1005010/most-efficient-unicode-hash-function-for-delphi-2009
   function HashOf(const key: string): cardinal;
@@ -368,6 +399,7 @@ function TAudioSessionService.CreateEtAudioSessionFromAudioSession(
 var
   audioSessionControl: IAudioSessionControl;
   audioSessionControl2: IAudioSessionControl2;
+  audioMeterInformation: IAudioMeterInformation;
   pid: Cardinal;
   sessionIdString: PWideChar;
   stringHash: string;
@@ -384,6 +416,11 @@ var
   ph: NativeUInt;
   dwCch: DWORD;
   //pSessionMap: PMapSession;
+  _displayName: PChar;
+  _iconPath: PChar;
+  _backgroundColor: Cardinal;
+  nMask: DWORD;
+  fPeakValue: Single;
 begin
   hr := sessionEnumerator.GetSession(sessionCount, audioSessionControl);
   if Failed(hr) then begin Result := hr; Exit; end;
@@ -394,7 +431,7 @@ begin
   hr := audioSessionControl2.GetProcessId(pid);
   if Failed(hr) then begin Result := hr; Exit; end;
 
-//  GetMem(etaudioSession, SizeOf(TEarTrumpetAudioSession));
+//  GetMem(etaudioSession, SizeOf(TAudioSession));
   etAudioSession.ProcessId := pid;
 
   hr := audioSessionControl2.GetGroupingParam(@etAudioSession.GroupingId);
@@ -420,6 +457,17 @@ begin
   if Failed(hr) then begin Result := hr; Exit; end;
   etAudioSession.IsMuted := not not isMuted;
 
+  // get audio peek
+  hr := audioSessionControl.QueryInterface(IID_IAudioMeterInformation, audioMeterInformation);
+  if hr = S_OK then
+  begin
+    if Succeeded(audioMeterInformation.QueryHardwareSupport(nMask)) then
+    begin
+      audioMeterInformation.GetPeakValue(fPeakValue);
+      etAudioSession.PeekValue := fPeakValue;
+    end;
+  end;
+
   hr := EsImmersiveProcess(pid);
 //  hr := S_FALSE;
 //  if IsImmersiveProcess(pid) then
@@ -429,11 +477,37 @@ begin
     hr := GetAppUserModelIdFromPid(pid, appUserModelId);
     if Failed(hr) then begin Result := hr; Exit; end;
 
-    hr := GetAppProperties(appUserModelId^, etAudioSession.DisplayName^, etAudioSession.IconPath^, etAudioSession.BackgroundColor);
+//    hr := GetAppProperties(PChar(appUserModelId), etAudioSession.DisplayName^, etAudioSession.IconPath^, etAudioSession.BackgroundColor);
+    hr := GetAppProperties(PChar(appUserModelId), _displayName, _iconPath, _backgroundColor);
+    if hr = S_OK then
+    begin
+      etAudioSession.DisplayName := _displayName;
+      etAudioSession.IconPath := _iconPath;
+      etAudioSession.BackgroundColor := _backgroundColor;
+    end;
 
     if Failed(hr) then begin Result := hr; Exit; end;
 
     etAudioSession.IsDesktopApp := False;
+/////////////////MOD PARA ENCONTRAR EL EXE EN LUGAR DEL NOMBRE :P
+      ph := OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+      //CloseHandle(ph);
+
+      if ph = INVALID_HANDLE_VALUE then
+        Result := HResultFromWin32(GetLastError);
+
+      dwCch := SizeOf(imagePath);
+      if not QueryFullProcessImageName(ph, 0, imagePath, @dwCch) then
+      begin
+        Result := S_FALSE;
+        CloseHandle(ph);
+        Exit;
+      end;
+      hr := SHStrDup(imagePath, etAudioSession.IconPath);
+      if Failed(hr) then begin Result := hr; CloseHandle(ph); Exit; end;
+      hr := SHStrDup(PathFindFileName(imagePath), etAudioSession.DisplayName);
+      if Failed(hr) then begin Result := hr; CloseHandle(ph); Exit; end;
+      CloseHandle(ph);
   end
   else if hr = S_FALSE then
   begin
@@ -483,12 +557,13 @@ begin
       if not QueryFullProcessImageName(ph, 0, imagePath, @dwCch) then
       begin
         Result := S_FALSE;
+        CloseHandle(ph);
         Exit;
       end;
       hr := SHStrDup(imagePath, etAudioSession.IconPath);
-      if Failed(hr) then begin Result := hr; Exit; end;
+      if Failed(hr) then begin Result := hr; CloseHandle(ph); Exit; end;
       hr := SHStrDup(PathFindFileName(imagePath), etAudioSession.DisplayName);
-      if Failed(hr) then begin Result := hr; Exit; end;
+      if Failed(hr) then begin Result := hr; CloseHandle(ph); Exit; end;
       CloseHandle(ph);
     end;
 
@@ -507,8 +582,8 @@ begin
   inherited;
 end;
 
-function TAudioSessionService.GetAppProperties(pszAppId: WideChar; var ppszName,
-  ppszIcon: WideChar; var background: ULONG): HRESULT;
+function TAudioSessionService.GetAppProperties(pszAppId: String;
+  var ppszName: PChar; var ppszIcon: PChar; var background: ULONG): HRESULT;
 var
   item: IShellItem2;
   itemname: PWideChar;
@@ -518,31 +593,38 @@ var
   mrtResMgr: IMrtResourceManager;
   resourceMap: IResourceMap;
   resolvedIconPath: PWideChar;
+  hr: HRESULT;
 begin
   ppszIcon := #0; //nil;
   ppszName := #0; //nil;
   background := 0;
 
-  SHCreateItemInKnownFolder(FOLDERID_AppsFolder, KF_FLAG_DONT_VERIFY, @pszAppId, IID_IShellItem2, item);
+  hr := SHCreateItemInKnownFolder(FOLDERID_AppsFolder, KF_FLAG_DONT_VERIFY, PChar(pszAppId), IID_IShellItem2, item);
 
-  item.GetString(PKEY_ItemNameDisplay, itemName);
-  item.GetUInt32(PKEY_AppUserModel_Background, background);
+  if hr = S_OK then
+  begin
+    item.GetString(PKEY_ItemNameDisplay, itemName);
+    item.GetUInt32(PKEY_AppUserModel_Background, background);
+    item.GetString(PKEY_AppUserModel_PackageInstallPath, installPath);
+    item.GetString(PKEY_AppUserModel_Icon, iconPath);
+    item.GetString(PKEY_AppUserModel_PackageFullName, fullPackagePath);
 
-  item.GetString(PKEY_AppUserModel_PackageInstallPath, installPath);
+    hr := CoCreateInstance(Class_MrtResourceManager, nil, CLSCTX_INPROC, IID_IMrtResourceManager, mrtResMgr);
+    if hr = S_OK then
+    begin
+      hr := mrtResMgr.InitializeForPackage(PChar(fullPackagePath));
 
-  item.GetString(PKEY_AppUserModel_Icon, iconPath);
+      mrtResMgr.GetMainResourceMap(@IID_IResourceMap,@resourceMap);
 
-  item.GetString(PKEY_AppUserModel_PackageFullName, fullPackagePath);
+      resourceMap.GetFilePath(iconPath, resolvedIconPath);
 
-  CoCreateInstance(Class_MrtResourceManager, nil, CLSCTX_INPROC, IID_IMrtResourceManager, mrtResMgr);
-  mrtResMgr.InitializeForPackage(fullPackagePath);
-
-  mrtResMgr.GetMainResourceMap(IID_IResourceMap,resourceMap);
-
-  resourceMap.GetFilePath(iconPath, resolvedIconPath);
-
-  ppszIcon := Char(resolvedIconPath);
-  ppszName := Char(itemName);
+      //ppszIcon := Char(resolvedIconPath);
+      SHStrDup(resolvedIconPath, ppszIcon);
+      //ppszName := Char(itemName);
+      SHStrDup(itemname, ppszName);
+    end;
+  end;
+  Result := hr;
 end;
 
 function TAudioSessionService.GetAppUserModelIdFromPid(pid: Cardinal;
@@ -587,7 +669,8 @@ begin
   end;
 
   //SetLength(appUserModelId, appUserModelIdLength);
-  GetMem(appUserModelId, appUserModelIdLength);
+//  GetMem(appUserModelId, appUserModelIdLength);
+  appUserModelId := StrAlloc(appUserModelIdLength);
   returnCode := GetApplicationUserModelId(ph, @appUserModelIdLength, appUserModelId);
   if returnCode <> ERROR_SUCCESS then
   begin
@@ -596,8 +679,9 @@ begin
     CloseHandle(ph);
     Exit;
   end;
-  SHStrDup(appUserModelId, _appUserModelId);
-  FreeMem(appUserModelId);
+//  SHStrDup(appUserModelId, _appUserModelId);
+  _appUserModelId := appUserModelId;  // release memory after _appUserModelId is not neede anymore
+//  FreeMem(appUserModelId);
 
   if CanResolveAppByApplicationUserModelId(_appUserModelId) then
   begin
@@ -662,6 +746,8 @@ begin
     SHStrDup(packageIds[0], applicationUserModelId);
   end;
 
+  StrDispose(appUserModelId);
+
   CloseHandle(ph);
   Result := S_OK;
 
@@ -710,34 +796,45 @@ var
   audioSessionManager: IAudioSessionManager2;
   audioSessionEnumerator: IAudioSessionEnumerator;
   sessionCount: Integer;
-  audioSession: PEarTrumpetAudioSession;
+  audioSession: PAudioSession;
   I: Integer;
   hr : HResult;
 begin
   CleanUpAudioSessions;
 
-  CoCreateInstance(CLASS_IMMDeviceEnumerator, nil, CLSCTX_INPROC, IID_IMMDeviceEnumerator, deviceEnumerator);
-
-  deviceEnumerator.GetDefaultAudioEndpoint(eRender, eMultimedia, device);
-
-  device.Activate(IID_IAudioSessionManager2, CLSCTX_INPROC, nil, audioSessionManager);
-
-  audioSessionManager.GetSessionEnumerator(audioSessionEnumerator);
-
-  sessionCount := 0;
-  audioSessionEnumerator.GetCount(sessionCount);
-
-  for I := 0 to sessionCount - 1 do
+  hr := CoInitialize(nil);
+  if Succeeded(hr) then
   begin
-    GetMem(audioSession, SizeOf(TEarTrumpetAudioSession)); // it will be free on its Destroy function
-    // let's make sure that Createet... alloc memory since prev is not required anymore as it seems
-    hr := CreateEtAudioSessionFromAudioSession(audioSessionEnumerator, I, audioSession);
-    if hr = S_OK then
-    begin
-      _sessions.Add(audioSession);
-    end;
 
+    hr := CoCreateInstance(CLASS_IMMDeviceEnumerator, nil, CLSCTX_INPROC, IID_IMMDeviceEnumerator, deviceEnumerator);
+
+    deviceEnumerator.GetDefaultAudioEndpoint(eRender, eMultimedia, device);
+
+    device.Activate(IID_IAudioSessionManager2, CLSCTX_INPROC, nil, audioSessionManager);
+
+    audioSessionManager.GetSessionEnumerator(audioSessionEnumerator);
+
+    sessionCount := 0;
+    audioSessionEnumerator.GetCount(sessionCount);
+
+    for I := 0 to sessionCount - 1 do
+    begin
+      GetMem(audioSession, SizeOf(TAudioSession)); // it will be free on its Destroy function
+      audioSession.SessionId := 0;
+      audioSession.DisplayName := '';// StrNew('');
+      audioSession.IconPath := ''; //StrNew('');
+      audioSession.PeekValue := 0; //set it to 0 by default
+      // let's make sure that Createet... alloc memory since prev is not required anymore as it seems
+      hr := CreateEtAudioSessionFromAudioSession(audioSessionEnumerator, I, audioSession);
+      if hr = S_OK then
+      begin
+        _sessions.Add(audioSession);
+      end;
+      FreeMem(audioSession);
+    end;
   end;
+
+  CoUninitialize;
 
   Result := S_OK;
 end;
@@ -753,7 +850,7 @@ begin
   // simpleAudioVolume is assigned from the mapped AudioManager2 beloging to that sessionId
   for I := 0 to _sessionMap.Count - 1 do
   begin
-    if sessionId = _sessionMap.Sessions[I] then
+    if sessionId = _sessionMap.sessionId[I] then
     begin
       _sessionMap[I].QueryInterface(IID_ISimpleAudioVolume, simpleAudioVolume);
       if isMuted then
@@ -777,7 +874,7 @@ begin
   // simpleAudioVolume is assigned from the mapped AudioManager2 beloging to that sessionId
   for I := 0 to _sessionMap.Count - 1 do
   begin
-    if sessionId = _sessionMap.Sessions[I] then
+    if sessionId = _sessionMap.sessionId[I] then
     begin
       _sessionMap[I].QueryInterface(IID_ISimpleAudioVolume, simpleAudioVolume);
       simpleAudioVolume.SetMasterVolume(volume, nil);
@@ -790,13 +887,12 @@ end;
 
 { TMapSessions }
 
-
 function TMapSessions.Add(Value: IAudioSessionControl2): Integer;
 begin
   Result := inherited Add(Value);
 end;
 
-function TMapSessions.Add(sesionId: Integer;
+function TMapSessions.Add(sesionId: LongWord;
   Value: IAudioSessionControl2): Integer;
 begin
   SetLength(sessionId, Count + 1);
@@ -817,11 +913,11 @@ begin
   Result := IAudioSessionControl2(Inherited Get(Index));
 end;
 
-
-
 function TMapSessions.GetSession(Index: Integer): Integer;
 begin
   Result := sessionId[Index];
 end;
 
 end.
+
+
