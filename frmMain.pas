@@ -22,7 +22,7 @@ uses
   Vcl.Imaging.pngimage, Vcl.ExtCtrls, Vcl.Buttons, Vcl.Graphics, Spotify, Vcl.Dialogs,
   OverbyteIcsHttpProt, OverbyteIcsWndControl, iTunes,
   OverbyteIcsMultipartHttpDownloader, OverbyteIcsWSocket, syncrossplatformjson, jpeg,
-  Vcl.ComCtrls, {AudioSessionService,} CommCtrl, ShellApi, SkinEngine, Winapi.Messages,
+  Vcl.ComCtrls, AudioSessionService, CommCtrl, ShellApi, SkinEngine, Winapi.Messages,
   Vcl.OleServer, SpeechLib_TLB, timeteller,
   JvComponentBase, JvId3v1, VirtualTrees, Vcl.Menus, System.StrUtils, SynCommons, frmAbout,
   System.ImageList, Vcl.ImgList, Vcl.OleCtrls, IdHashMessageDigest,
@@ -222,15 +222,15 @@ type
     VolumePeak: Single;
   end;
 
-  TListSessions = class(TList)
-  private
-    function Get(Index: Integer): PEarTrumpetAudioSessionModel;
-  public
-    //destructor Destroy; override;
-    function Add(Value: PEarTrumpetAudioSessionModel): Integer;
-    procedure Notify(Ptr: Pointer; Action: TListNotification);override;
-    property Items[Index: Integer]: PEarTrumpetAudioSessionModel read Get; default;
-  end;
+//  TListSessions = class(TList)
+//  private
+//    function Get(Index: Integer): PEarTrumpetAudioSessionModel;
+//  public
+//    //destructor Destroy; override;
+//    function Add(Value: PEarTrumpetAudioSessionModel): Integer;
+//    procedure Notify(Ptr: Pointer; Action: TListNotification);override;
+//    property Items[Index: Integer]: PEarTrumpetAudioSessionModel read Get; default;
+//  end;
 
 type
   { Mp3 Playlist}
@@ -244,7 +244,7 @@ type
 
 var
   MainForm: TMainForm;
-  //AudioSession: TAudioSessionService;
+  AudioSession: TAudioSessionService;
   sessions: TListSessions;
   spotifySessionId: Integer;
   win10shellhostaudioId: Integer;
@@ -270,16 +270,16 @@ var
 procedure SwitchToThisWindow(h1: hWnd; x: bool); stdcall;
   external user32 Name 'SwitchToThisWindow';
 
-function RefreshAudioSessions: Integer; stdcall;
-    external 'SpotifyHelper.dll' name 'SpotifyAudioHook';
-  function GetAudioSessionCount: Integer; stdcall;
-    external 'SpotifyHelper.dll' name 'SpotifyAudioList';
-  function GetAudioSessions(var sessions: IntPtr): Integer; stdcall;
-    external 'SpotifyHelper.dll' name 'SpotifyAudioLists';
-  function SetAudioSessionVolume(sessionId: LongWord; volume: Single): Integer; stdcall;
-    external 'SpotifyHelper.dll' name 'SpotifyVolume';
-  function SetAudioSessionMute(sessionId: LongWord; isMuted: boolean): Integer; stdcall;
-    external 'SpotifyHelper.dll' name 'SpotifyMute';
+//function RefreshAudioSessions: Integer; stdcall;
+//    external 'SpotifyHelper.dll' name 'SpotifyAudioHook';
+//  function GetAudioSessionCount: Integer; stdcall;
+//    external 'SpotifyHelper.dll' name 'SpotifyAudioList';
+//  function GetAudioSessions(var sessions: IntPtr): Integer; stdcall;
+//    external 'SpotifyHelper.dll' name 'SpotifyAudioLists';
+//  function SetAudioSessionVolume(sessionId: LongWord; volume: Single): Integer; stdcall;
+//    external 'SpotifyHelper.dll' name 'SpotifyVolume';
+//  function SetAudioSessionMute(sessionId: LongWord; isMuted: boolean): Integer; stdcall;
+//    external 'SpotifyHelper.dll' name 'SpotifyMute';
 implementation
 
 {$R *.dfm}
@@ -574,29 +574,18 @@ var
 //  pid: UINT;
 
 begin
-  RefreshAudioSessions;
-  sessionCount := GetAudioSessionCount;
+  AudioSession.RefreshAudioSessions;
+//  sessionCount := GetAudioSessionCount;
 
-  sessions.Clear;
-{  if sessions <> nil then
+//  sessions.Clear;
+  if sessions <> nil then
     sessions.Clear
   else
-    sessions := TListSessions.Create;}
+    sessions := TListSessions.Create;
 
   try
-    GetAudioSessions(rawSessionsPtr);
-
-    sizeOfAudioSessionPtr := SizeOf(TEarTrumpetAudioSessionModel);
-
-    for I := 0 to sessionCount - 1 do
-    begin
-      GetMem(psession, sizeOfAudioSessionPtr);
-      window := rawSessionsPtr + sizeOfAudioSessionPtr * i;
-      CopyMemory(psession, Pointer(window),  sizeOfAudioSessionPtr);
-      sessions.Add(psession);
-    end;
-
-    //GetWindowThreadProcessId(SpotyClient.Handle, @pid);
+    sessions.Clear;
+    AudioSession.GetAudioSessions(sessions);
 
     lstAudioSessions.Clear;
     lstAudioSessions.Items.BeginUpdate;
@@ -607,18 +596,18 @@ begin
       lstAudioSessions.Items.Add(sessions[i].DisplayName);
 
       if (LowerCase(PChar( sessions[I].DisplayName)) = 'spotify.exe')
-      and (sessions[I].VolumePeak > 0)
+      and (sessions[I].PeekValue > 0)
       then
       begin
-        pbPeak.Position := Round(sessions[I].VolumePeak * 100);
-        lblpeak.Caption := FloatToStr(Round(sessions[I].VolumePeak  * 100));
+        pbPeak.Position := Round(sessions[I].PeekValue * 100);
+        lblpeak.Caption := FloatToStr(Round(sessions[I].PeekValue  * 100));
       end;
       //else
         //pbPeak.Position := 100;
 
       if (LowerCase(PChar( sessions[I].DisplayName)) = 'spotify.exe')
       and (spotifySessionId = -1)
-      and (sessions[I].VolumePeak > 0)
+      and (sessions[I].PeekValue > 0)
       then
       begin
         spotifySessionId := I;
@@ -724,14 +713,14 @@ begin
   if btnVolume.Caption = '🔈' then
   begin
     btnVolume.Caption := '🔊';
-    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
-    SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
+    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
+//    SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
   end
   else
   begin
     btnVolume.Caption := '🔈';
-    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
-    SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
+    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
+//    SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
   end;
 
 end;
@@ -877,7 +866,7 @@ begin
 
   TrayIcon1.Icon.LoadFromResourceName(HInstance, 'ICONO');
   TrayIcon1.Visible := True;
-  //AudioSession := TAudioSessionService.Create;
+  AudioSession := TAudioSessionService.Create;
   sessions := TListSessions.Create;
 
   TimeTeller := TTimeTeller.Create(Handle);
@@ -909,10 +898,12 @@ end;
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   TimeTeller.Free;
-  sessions.Free;
+  if sessions <> nil then
+    sessions.Free;
   SpotyClient.Free;
   iTunesClient.Free;
   //FreeAndNil(AudioSession);
+  AudioSession.Free;
 end;
 
 
@@ -1354,13 +1345,13 @@ begin
   //Temporary workaround without json webapi - 2019
   if (Trim(leSong.Text) = '') then
   begin
-    SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
-    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
+//    SetAudioSessionMute(sessions[spotifySessionId].SessionId, True);
+    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, True);
   end
   else
   begin
-    SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
-    //AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
+//    SetAudioSessionMute(sessions[spotifySessionId].SessionId, False);
+    AudioSession.SetAudioSessionMute(sessions.Items[spotifySessionId].SessionId, False);
   end;
 end;
 
@@ -1375,8 +1366,11 @@ begin
   //sessions[spotifySessionId].Volume := (100 - TrackBar1.Position) / 100;
   if spotifySessionId < 0 then Exit;
 
-  SetAudioSessionVolume(sessions[spotifySessionId].SessionId, (100 - TrackBar1.Position) / 100);
+//  SetAudioSessionVolume(sessions[spotifySessionId].SessionId, (100 - TrackBar1.Position) / 100);
+//  sessions[spotifySessionId].Volume := (100 - TrackBar1.Position) / 100;
+  AudioSession.SetAudioSessionVolume(sessions[spotifySessionId].SessionId, (100 - TrackBar1.Position) / 100);
   sessions[spotifySessionId].Volume := (100 - TrackBar1.Position) / 100;
+
 end;
 
 procedure TMainForm.TrayIcon1DblClick(Sender: TObject);
@@ -1587,10 +1581,10 @@ begin
 
 end;
 
-function TListSessions.Add(Value: PEarTrumpetAudioSessionModel): Integer;
-begin
-  Result := inherited Add(Value);
-end;
+//function TListSessions.Add(Value: PEarTrumpetAudioSessionModel): Integer;
+//begin
+//  Result := inherited Add(Value);
+//end;
 
 {destructor TListSessions.Destroy;
 var
@@ -1603,17 +1597,17 @@ begin
   inherited;
 end;}
 
-function TListSessions.Get(Index: Integer): PEarTrumpetAudioSessionModel;
-begin
-  Result := PEarTrumpetAudioSessionModel(inherited Get(Index));
-end;
-
-procedure TListSessions.Notify(Ptr: Pointer; Action: TListNotification);
-begin
-  inherited;
-  if Action = lnDeleted then
-    FreeMem(Ptr);
-end;
+//function TListSessions.Get(Index: Integer): PEarTrumpetAudioSessionModel;
+//begin
+//  Result := PEarTrumpetAudioSessionModel(inherited Get(Index));
+//end;
+//
+//procedure TListSessions.Notify(Ptr: Pointer; Action: TListNotification);
+//begin
+//  inherited;
+//  if Action = lnDeleted then
+//    FreeMem(Ptr);
+//end;
 
 end.
 
